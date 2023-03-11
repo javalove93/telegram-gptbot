@@ -40,14 +40,14 @@ def webhook():
                 "from": {
                     "id": 6086869870,
                     "is_bot": false,
-                    "first_name": "\uba85\ud6c8",
-                    "last_name": "\uc815",
+                    "first_name": "..",
+                    "last_name": "..",
                     "language_code": "ko"
                 },
                 "chat": {
                     "id": 6086869870,
-                    "first_name": "\uba85\ud6c8",
-                    "last_name": "\uc815",
+                    "first_name": "..",
+                    "last_name": "..",
                     "type": "private"
                 },
                 "date": 1678285290,
@@ -64,12 +64,12 @@ def webhook():
                 "message_id": 131,
                 "sender_chat": {
                     "id": -1001762165470,
-                    "title": "Jerry's Topics",
+                    "title": "..",
                     "type": "channel"
                 },
                 "chat": {
                     "id": -1001762165470,
-                    "title": "Jerry's Topics",
+                    "title": "..",
                     "type": "channel"
                 },
                 "date": 1678285353,
