@@ -24,7 +24,7 @@ ChatGPT를 편하게 불러쓸수 있게 텔레그램 봇에 openai API를 연�
 * 단 하나의 소스 src/webhook.py 로 이루어져 있습니다.
 * 아주 심플한 Flask 웹프로그램에 심지어 코딩도 Copilot 친구의 도움 받아서 했기 때문에 중복 코드 등도 많습니다 ^^;;
 * 텔레그램 봇의 Token과 OpenAI API Key을 각자 받아서 넣으시면 됩니다.
-* 봇의 abusing을 막기 위해 제 텔레그램 Chat ID를 if 문으로 체크하는 부분이 있는데, 각자 ID가 다르므로 일반 remark로 막고 확인 후에 변경하시면 됩니다.
+* 봇의 abusing을 막기 위해 제 텔레그램 Chat ID를 if 문으로 체크하는 부분이 있는데, 각자 ID가 다르므로 일단 remark로 막고 확인 후에 변경하시면 됩니다.
 
 4. 실행 방법 - 01 ~ 03 차례로 실행하면 됩니다.
 * 00.setenv.sh - 컨테이너 이름, GCP Project ID 등 지정
