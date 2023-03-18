@@ -5,7 +5,7 @@ ChatGPT를 편하게 불러쓸수 있게 텔레그램 봇에 openai API를 연�
 우선은 OpenAI에 가셔서 API 사용을 위한 유료 가입을 하셔야 합니다. API 비용은 API 호출당 charging으로 chatgpt용 모델의 경우 많이 저렴합니다.\
 제가 사용해 보니 비용은 ChatGPT 유료의 거의 1/10 수준인데 응답속도는 ChatGPT 프리미엄급입니다. 다만, ChatGPT 처럼 한자씩 typing 하는 효과는 없습니다.\
 간만에 코딩도 잼있있고 해서 혹시 궁금하신 분들을 위해 봇 소스 github에 공유합니다.\
-봇의 런타임은 Google Cloud의 Cloud Run에서 돌립니다. 서버 없이 바로 사용할 수 있어 편리하고, 컨테이너는 바로 HTTPS(SSL) endpoint를 만들 수 있으므로 봇 운영에 편리합니다.
+봇의 런타임은 Google Cloud의 Cloud Run에서 돌립니다. 서버 없이 바로 사용할 수 있어 편리하고, 컨테이너를 바로 HTTPS(SSL) endpoint를 만들 수 있으므로 봇 운영에 편리합니다.
 
 ## 소스 및 사용 방법 설명
 
