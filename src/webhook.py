@@ -3,33 +3,35 @@ import json
 from flask import Flask, request
 import os
 import openai
+from google.cloud import translate_v2 as translate
+import logging
 
+if os.environ['GOOGLE_APPLICATION_CREDENTIALS'] == '':
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '../sa-key.json'
 app = Flask(__name__)
 
 # Replace YOUR_BOT_TOKEN with your actual bot token
-bot_token = "YOUR TELEGRAM BOT TOKEN"
+# ChatGPTbyJerryBot
+bot_token = "YOUR_BOT_TOKEN" ############## REDACTED
 
 # OpenAI API Key
-openai.api_key = "YOUR OpenAI API KEY"
+openai.api_key = "YOUR_OPENAI_API_KEY" ############## REDACTED
 
-# messages history
-messages = [
-    {'role': 'system', 'content': 'You are a helpful assistant'}
-]
+# allowed chatid
+allowed_chatid = [ALLOWED_CHATID_1, ALLOWED_CHATID_2, ... as number] ############## REDACTED
+
+# Params for openai api
+params = {}
 
 # parameters for openai api
-frequency_penalty = 0.5
-presence_penalty = 0.5
-max_tokens = 2048
-temperature = 0.5
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    global messages, frequency_penalty, presence_penalty, max_tokens, temperature
+    global allowed_chatid, params
 
     # Extract the message from the incoming request
     update = request.json
-    print(json.dumps(update, indent=4))
+    logging.debug(json.dumps(update, indent=4))
 
     # 1:1 chat message sample
     ''' 
@@ -38,16 +40,16 @@ def webhook():
             "message": {                        # edited_message 인 경우가 있음 if message is edited
                 "message_id": 51,
                 "from": {
-                    "id": 6086869870,
+                    "id": CHAT_ID, ############## REDACTED
                     "is_bot": false,
-                    "first_name": "..",
-                    "last_name": "..",
+                    "first_name": "\uba85\ud6c8",
+                    "last_name": "\uc815",
                     "language_code": "ko"
                 },
                 "chat": {
-                    "id": 6086869870,
-                    "first_name": "..",
-                    "last_name": "..",
+                    "id": CHAT_ID, ############## REDACTED
+                    "first_name": "\uba85\ud6c8",
+                    "last_name": "\uc815",
                     "type": "private"
                 },
                 "date": 1678285290,
@@ -63,13 +65,13 @@ def webhook():
             "channel_post": {
                 "message_id": 131,
                 "sender_chat": {
-                    "id": -1001762165470,
-                    "title": "..",
+                    "id": CHAT_ID, ############## REDACTED
+                    "title": "Jerry's Topics",
                     "type": "channel"
                 },
                 "chat": {
-                    "id": -1001762165470,
-                    "title": "..",
+                    "id": CHAT_ID, ############## REDACTED
+                    "title": "Jerry's Topics",
                     "type": "channel"
                 },
                 "date": 1678285353,
@@ -90,13 +92,53 @@ def webhook():
             message = update['message']['text']
 
         # Allow only specific chat id to prevent abusing of your openai budget !!!!
-        if chatid == 6086869870:
+        if chatid in allowed_chatid:
+            if chatid not in params or params[chatid] is None:
+                params[chatid] = {
+                    "model": DEFAULT gpt-3.5-turbo, OPTIONAL gpt-4, ############## REDACTED
+                    "max_tokens": FOR gpt-3.5-turbo, 2048 and FOR gpt-4, 4096, ############## REDACTED
+                    "frequency_penalty": 0.5,
+                    "presence_penalty": 0.5,
+                    "temperature": 0.5,
+                    "translate_target": None,
+                    "timeout_min": 60,
+                    "last_message_time": None,
+                    # messages history
+                    "messages": [
+                        {'role': 'system', 'content': 'You are a helpful assistant'}
+                    ]
+                }
+
+            model = params[chatid]['model']
+            frequency_penalty = params[chatid]['frequency_penalty']
+            presence_penalty = params[chatid]['presence_penalty']
+            max_tokens = params[chatid]['max_tokens']
+            temperature = params[chatid]['temperature']
+            timeout_min = params[chatid]['timeout_min']
+            last_message_time = params[chatid]['last_message_time']
+            translate_target = params[chatid]['translate_target']
+            messages = params[chatid]['messages']
+
+            import time
+            if last_message_time is not None:
+                if time.time() - last_message_time > timeout_min * 60:
+                    messages = [
+                        {'role': 'system', 'content': 'You are a helpful assistant'}
+                    ]
+                    params[chatid]['messages'] = messages
+                    send_message(chatid, "{} minutes timed out. Clear messages".format(timeout_min))
+            last_message_time = time.time()
+            params[chatid]['last_message_time'] = last_message_time
+
+            tclient = translate.Client()
+
             # Bot's / command parsing and handling
             if message.startswith("/"):
                 if message == "/clear":
                     messages = [
                         {'role': 'system', 'content': 'You are a helpful assistant'}
                     ]
+                    params[chatid]['messages'] = messages
                     send_message(chatid, "Clear messages")
                     return 'OK'
                 elif message == "/topic" or message == "/topics":
@@ -108,30 +150,31 @@ def webhook():
                         return 'OK'
                     elif message[8:].startswith("frequency_penalty"):
                         frequency_penalty = float(message[8:].split(" ")[1])
+                        params[chatid]['frequency_penalty'] = frequency_penalty
                         message = "frequency_penalty: {}".format(frequency_penalty)
                         send_message(chatid, message)
                         return 'OK'
                     elif message[8:].startswith("presence_penalty"):
                         presence_penalty = float(message[8:].split(" ")[1])
+                        params[chatid]['presence_penalty'] = presence_penalty
                         message = "presence_penalty: {}".format(presence_penalty)
                         send_message(chatid, message)
                         return 'OK'
                     elif message[8:].startswith("max_tokens"):
                         max_tokens = int(message[8:].split(" ")[1])
+                        params[chatid]['max_tokens'] = max_tokens
                         message = "max_tokens: {}".format(max_tokens)
                         send_message(chatid, message)
                         return 'OK'
                     elif message[8:].startswith("temperature"):
                         temperature = float(message[8:].split(" ")[1])
+                        params[chatid]['temperature'] = temperature
                         message = "temperature: {}".format(temperature)
                         send_message(chatid, message)
                         return 'OK'
                     elif message[8:] == "reset":
-                        frequency_penalty = 0.5
-                        presence_penalty = 0.5
-                        max_tokens = 2048
-                        temperature = 0.5
-                        message = "Reset parameters as frequency_penalty: 0.5, presence_penalty: 0.5, max_tokens: 2048, temperature: 0.5"
+                        params[chatid] = None
+                        message = "Reset parameters. Check current params with /params command"
                         send_message(chatid, message)
                         return 'OK'
                     else:
@@ -145,27 +188,63 @@ def webhook():
                         return 'OK'
                     elif message[8:] == "reset":
                         messages[0]['content'] = "You are a helpful assistant"
+                        params[chatid]['messages'] = messages
                         send_message(chatid, "Reset system message as {}".format(messages[0]))
                         return 'OK'
                     else:
                         messages[0]['content'] = message[8:]
+                        params[chatid]['messages'] = messages
                         send_message(chatid, "Set system message as {}".format(messages[0]))
                         return 'OK'
-                elif message == "/help":
-                    message = "Available commands are: /help, /clear, /topic, /params /system"
+                elif message.startswith("/translate"):
+                    if message == "/translate":
+                        message = "Translate target language is {}".format(translate_target if translate_target else "None")
+                        send_message(chatid, message)
+                        return 'OK'
+                    else:
+                        language = message[10:].strip()
+                        if language.lower() == "none":
+                            translate_target = None
+                        else:
+                            translate_target = language
+                        
+                        params[chatid]['translate_target'] = language
+                        message = "Translate target language is {}".format(translate_target)
+
+                        send_message(chatid, message)
+                        return 'OK'
+                elif message == "/history":
+                    message = "History messages are: \n"
+                    for msg in messages:
+                        message += "{}: {}\n".format(msg['role'], msg['content'])
                     send_message(chatid, message)
                     return 'OK'
+                elif message.startswith("/model"):
+                    if message == "/model":
+                        message = "Model is {}".format(model)
+                        send_message(chatid, message)
+                        return 'OK'
+                    else:
+                        model = message[7:].strip()
+                        params[chatid]['model'] = model
+                        message = "Model is {}".format(model)
+                        send_message(chatid, message)
+                        return 'OK'
                 else:
+                    help_message = "Available commands are: /help, /clear, /topic, /params, /system, /translate, /history, /model \nhttps://javalove93.github.io/telegram-gptbot/index.html"
+                    if message == "/help":
+                        send_message(chatid, help_message)
+                        return 'OK'
+
                     send_message(chatid, "Unknown command")
-                    send_message(chatid, "Available commands are: /help, /clear, /topic, /params /system")
+                    send_message(chatid, help_message)
                     return 'OK'
             
             # Process the message and send a response
-            model = "gpt-3.5-turbo"
+            if translate_target:
+                message = tclient.translate(message, target_language='en')['translatedText']
             messages.append({'role': 'user', 'content': message})
-            print("=========================================================")
-            print(json.dumps(messages, indent=4))
-            print("=========================================================")
+            logging.info(json.dumps(messages, indent=4))
 
             # frequency_penalty: 0.5
             """
@@ -193,7 +272,7 @@ def webhook():
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens,            # 최대 2048 in davinci
+                max_tokens=max_tokens,
                 top_p=1,
                 frequency_penalty=frequency_penalty,
                 presence_penalty=presence_penalty,
@@ -201,15 +280,18 @@ def webhook():
             )
 
             message = response['choices'][0]['message']['content']
+            if translate_target:
+                message = tclient.translate(message, target_language=translate_target)['translatedText']
             messages.append({'role': 'assistant', 'content': message})
+            params[chatid]["messages"] = messages
             response_text = message
         else:
             response_text = "GPT: You're not welcomed to use this bot. {}".format(chatid)
 
         send_message(chatid, response_text)
     except Exception as e:
-        print(e)
-        send_message('6086869879', 'Error')
+        logging.exception(e)
+        send_message(chatid, 'Error')
 
     return 'OK'
 
