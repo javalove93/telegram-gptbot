@@ -14,4 +14,4 @@ RUN pip install Flask gunicorn openai
 # webserver, with 4 worker process and only one thread per worker.
 # For environments with multiple CPU cores, increase the number of workers
 # to be equal to the cores available.
-CMD exec gunicorn --bind :8080 --workers 4 --threads 1 --timeout 0 webhook:app
+CMD exec gunicorn --bind :8080 --workers 1 --threads 1 --timeout 0 webhook:app
