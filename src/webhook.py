@@ -96,7 +96,7 @@ def webhook():
             if chatid not in params or params[chatid] is None:
                 params[chatid] = {
                     "model": DEFAULT gpt-3.5-turbo, OPTIONAL gpt-4, ############## REDACTED
-                    "max_tokens": FOR gpt-3.5-turbo, 2048 and FOR gpt-4, 4096, ############## REDACTED
+                    "max_tokens": 2048 FOR gpt-3.5-turbo AND 4096 FOR gpt-4, ############## REDACTED
                     "frequency_penalty": 0.5,
                     "presence_penalty": 0.5,
                     "temperature": 0.5,
@@ -114,12 +114,14 @@ def webhook():
             presence_penalty = params[chatid]['presence_penalty']
             max_tokens = params[chatid]['max_tokens']
             temperature = params[chatid]['temperature']
-            timeout_min = params[chatid]['timeout_min']
-            last_message_time = params[chatid]['last_message_time']
             translate_target = params[chatid]['translate_target']
             messages = params[chatid]['messages']
 
+            # Remove timeout handling
+            """
             import time
+            timeout_min = params[chatid]['timeout_min']
+            last_message_time = params[chatid]['last_message_time']
             if last_message_time is not None:
                 if time.time() - last_message_time > timeout_min * 60:
                     messages = [
@@ -127,10 +129,14 @@ def webhook():
                     ]
                     params[chatid]['messages'] = messages
                     send_message(chatid, "{} minutes timed out. Clear messages".format(timeout_min))
+                    logging.info("{} minutes timed out. Clear messages".format(timeout_min))
             last_message_time = time.time()
             params[chatid]['last_message_time'] = last_message_time
+            """
 
             tclient = translate.Client()
+
+            update_msg = True
 
             # Bot's / command parsing and handling
             if message.startswith("/"):
@@ -143,6 +149,7 @@ def webhook():
                     return 'OK'
                 elif message == "/topic" or message == "/topics":
                     message = "list up topics we have discussed"
+                    update_msg = False
                 elif message.startswith("/params"):
                     if message == "/params":
                         message = "frequency_penalty: {}\npresence_penalty: {}\nmax_tokens: {}\ntemperature: {}".format(frequency_penalty, presence_penalty, max_tokens, temperature)
@@ -283,7 +290,8 @@ def webhook():
             if translate_target:
                 message = tclient.translate(message, target_language=translate_target)['translatedText']
             messages.append({'role': 'assistant', 'content': message})
-            params[chatid]["messages"] = messages
+            if update_msg:
+                params[chatid]["messages"] = messages
             response_text = message
         else:
             response_text = "GPT: You're not welcomed to use this bot. {}".format(chatid)
