@@ -142,7 +142,7 @@ def webhook():
                     send_message(chatid, "Clear messages")
                     return 'OK'
                 elif message == "/topic" or message == "/topics":
-                    message = "list up topics we are talking so far"
+                    message = "list up topics we have discussed"
                 elif message.startswith("/params"):
                     if message == "/params":
                         message = "frequency_penalty: {}\npresence_penalty: {}\nmax_tokens: {}\ntemperature: {}".format(frequency_penalty, presence_penalty, max_tokens, temperature)
