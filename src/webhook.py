@@ -1,3 +1,7 @@
+import datetime
+import re
+import subprocess
+import traceback
 import requests
 import json
 from flask import Flask, request
@@ -5,6 +9,10 @@ import os
 import openai
 from google.cloud import translate_v2 as translate
 import logging
+import sys
+from transformers import AutoTokenizer
+
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 if os.environ['GOOGLE_APPLICATION_CREDENTIALS'] == '':
     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '../sa-key.json'
@@ -15,7 +23,8 @@ app = Flask(__name__)
 bot_token = "YOUR_BOT_TOKEN" ############## REDACTED
 
 # OpenAI API Key
-openai.api_key = "YOUR_OPENAI_API_KEY" ############## REDACTED
+openai_apikey = "YOUR_OPENAI_API_KEY" ############## REDACTED
+openai.api_key = openai_apikey
 
 # allowed chatid
 allowed_chatid = [ALLOWED_CHATID_1, ALLOWED_CHATID_2, ... as number] ############## REDACTED
@@ -27,7 +36,7 @@ params = {}
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    global allowed_chatid, params
+    global allowed_chatid, params, openai_apikey
 
     # Extract the message from the incoming request
     update = request.json
@@ -81,6 +90,8 @@ def webhook():
     '''
 
     try:
+        debug = "on"
+        update_id = update['update_id']
         if 'channel_post' in update:
             chatid = update['channel_post']['chat']['id']
             message = update['channel_post']['text']
@@ -90,6 +101,30 @@ def webhook():
         else:
             chatid = update['message']['chat']['id']
             message = update['message']['text']
+
+        # frequency_penalty: 0.5
+        """
+        PT: The `frequency_penalty` parameter in OpenAI's GPT-3 API can be set to any value between 0.0 and 1.0, with 0.0 indicating no penalty for repetition and 1.0 indicating the strongest possible penalty for repetition. 
+
+        Here's an overview of what different values of `frequency_penalty` might result in:
+
+        - 0.0: No penalty for repetition. The model may generate more repetitive output.
+        - 0.5: Moderate penalty for repetition. The model will try to avoid repeating words or phrases too often.
+        - 1.0: Strong penalty for repetition. The model will avoid repeating words or phrases as much as possible, which may result in more diverse output but could also make the output less coherent or grammatically correct.
+
+        The optimal value for `frequency_penalty` will depend on the specific use case and the desired output. A higher value may be more appropriate for generating creative or novel output, while a lower value may be more appropriate for generating more coherent or structured output.
+        """
+
+        # presence_penalty: 0.5
+        """
+        GPT: `presence_penalty` is a parameter in OpenAI's GPT-3 language model that controls the model's tendency to generate repeated phrases or sentences. It is used to penalize the model for generating text that is too similar to the input text or previously generated text. 
+
+        The presence penalty value ranges from 0 to 1, with 0 indicating no penalty and 1 indicating the maximum penalty. A higher presence penalty value results in the model being more cautious about generating text that is similar to the input or previous outputs. 
+
+        This parameter is useful in preventing the model from generating repetitive or redundant text and can be adjusted based on the specific use case and desired output.
+        """
+
+        message_trimd = None
 
         # Allow only specific chat id to prevent abusing of your openai budget !!!!
         if chatid in allowed_chatid:
@@ -101,8 +136,9 @@ def webhook():
                     "presence_penalty": 0.5,
                     "temperature": 0.5,
                     "translate_target": None,
-                    "timeout_min": 60,
-                    "last_message_time": None,
+                    "debug": "off",
+                    "timeout": 120,
+                    "trim": "on",
                     # messages history
                     "messages": [
                         {'role': 'system', 'content': 'You are a helpful assistant'}
@@ -115,24 +151,22 @@ def webhook():
             max_tokens = params[chatid]['max_tokens']
             temperature = params[chatid]['temperature']
             translate_target = params[chatid]['translate_target']
-            messages = params[chatid]['messages']
+            messages = params[chatid]['messages'].copy()
+            debug = params[chatid]['debug']
+            timeout = params[chatid]['timeout']
+            trim = params[chatid]['trim']
 
-            # Remove timeout handling
-            """
-            import time
-            timeout_min = params[chatid]['timeout_min']
-            last_message_time = params[chatid]['last_message_time']
-            if last_message_time is not None:
-                if time.time() - last_message_time > timeout_min * 60:
-                    messages = [
-                        {'role': 'system', 'content': 'You are a helpful assistant'}
-                    ]
-                    params[chatid]['messages'] = messages
-                    send_message(chatid, "{} minutes timed out. Clear messages".format(timeout_min))
-                    logging.info("{} minutes timed out. Clear messages".format(timeout_min))
-            last_message_time = time.time()
-            params[chatid]['last_message_time'] = last_message_time
-            """
+            # Prevent same update_id retry (mostly caused by openai API timeout) - works
+            if 'last_update_id' in params[chatid]:
+                last_update_id = params[chatid]['last_update_id']
+                if update_id == last_update_id:
+                    send_message(chatid, "Same update_id. Ignore")
+                    return "OK"
+
+            params[chatid]['last_update_id'] = update_id
+
+            if debug == "on":
+                logging.info(json.dumps(update, indent=4))
 
             tclient = translate.Client()
 
@@ -152,7 +186,7 @@ def webhook():
                     update_msg = False
                 elif message.startswith("/params"):
                     if message == "/params":
-                        message = "frequency_penalty: {}\npresence_penalty: {}\nmax_tokens: {}\ntemperature: {}".format(frequency_penalty, presence_penalty, max_tokens, temperature)
+                        message = "frequency_penalty: {}\npresence_penalty: {}\nmax_tokens: {}\ntemperature: {}\nmodel: {}".format(frequency_penalty, presence_penalty, max_tokens, temperature, model)
                         send_message(chatid, message)
                         return 'OK'
                     elif message[8:].startswith("frequency_penalty"):
@@ -179,6 +213,12 @@ def webhook():
                         message = "temperature: {}".format(temperature)
                         send_message(chatid, message)
                         return 'OK'
+                    elif message[8:].startswith("model"):
+                        model = message[8:].split(" ")[1]
+                        params[chatid]['model'] = model
+                        message = "Model is {}".format(model)
+                        send_message(chatid, message)
+                        return 'OK'
                     elif message[8:] == "reset":
                         params[chatid] = None
                         message = "Reset parameters. Check current params with /params command"
@@ -186,7 +226,7 @@ def webhook():
                         return 'OK'
                     else:
                         send_message(chatid, "Unknown params")
-                        send_message(chatid, "Available params are: frequency_penalty, presence_penalty, max_tokens, temperature, reset")
+                        send_message(chatid, "Available params are: frequency_penalty, presence_penalty, max_tokens, temperature, model, reset")
                         return 'OK'
                 elif message.startswith("/system"):
                     if message == "/system":
@@ -221,7 +261,10 @@ def webhook():
                         send_message(chatid, message)
                         return 'OK'
                 elif message == "/history":
-                    message = "History messages are: \n"
+                    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+                    number_of_tokens = len(tokenizer(json.dumps(messages))['input_ids'])
+
+                    message = "History messages are (token: {}): \n".format(number_of_tokens)
                     for msg in messages:
                         message += "{}: {}\n".format(msg['role'], msg['content'])
                     send_message(chatid, message)
@@ -237,8 +280,78 @@ def webhook():
                         message = "Model is {}".format(model)
                         send_message(chatid, message)
                         return 'OK'
+                elif message.startswith("/debug"):
+                    if message == "/debug":
+                        message = "Debug mode is {}".format(debug)
+                        send_message(chatid, message)
+                        return 'OK'
+                    else:
+                        debug = message[7:].strip().lower()
+                        if debug not in ["on", "off"]:
+                            send_message(chatid, "Debug mode should be on or off")
+                            return 'OK'
+                        params[chatid]['debug'] = debug
+                        message = "Debug mode is {}".format(debug)
+                        send_message(chatid, message)
+                        return 'OK'
+                elif message.startswith("/timeout"):
+                    if message == "/timeout":
+                        message = "Timeout is {}".format(timeout)
+                        send_message(chatid, message)
+                        return 'OK'
+                    else:
+                        timeout = int(message[9:].strip())
+                        params[chatid]['timeout'] = timeout
+                        message = "Timeout is {}".format(timeout)
+                        send_message(chatid, message)
+                        return 'OK'
+                elif message.startswith("/trim"):
+                    if message == "/trim":
+                        message = "Trim is {}".format(trim)
+                        send_message(chatid, message)
+                        return 'OK'
+                    else:
+                        trim = message[6:].strip()
+                        if trim not in ["on", "off"]:
+                            send_message(chatid, "Trim should be on or off")
+                            return 'OK'
+                        params[chatid]['trim'] = trim
+                        message = "Trim is {}".format(trim)
+                        send_message(chatid, message)
+                        return 'OK'
+                elif message == "/info" or message == "/version":
+                    # get last updated time of 'webhook.py' file in KST
+                    # Get the timestamp of the file in UTC
+                    timestamp = datetime.datetime.fromtimestamp(os.path.getmtime('webhook.py'))
+                    # Convert the UTC timestamp to KST timezone
+                    kst_timestamp = timestamp.astimezone(datetime.timezone(datetime.timedelta(hours=9)))
+                    last_updated = kst_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+                    message = "Last updated: {}".format(last_updated)
+                    send_message(chatid, message)
+                    return 'OK'
+                elif message == "/gpt3":
+                    model = "gpt-3.5-turbo"
+                    max_tokens = 2048
+                    params[chatid]['model'] = model
+                    params[chatid]['max_tokens'] = max_tokens
+                    message = "Model is {} and max_tokens is {}".format(model, max_tokens)
+                    send_message(chatid, message)
+                    return 'OK'
+                elif message == "/gpt4":
+                    model = "gpt-4"
+                    max_tokens = 4096
+                    params[chatid]['model'] = model
+                    params[chatid]['max_tokens'] = max_tokens
+                    message = "Model is {} and max_tokens is {}".format(model, max_tokens)
+                    send_message(chatid, message)
+                    return 'OK'
+                elif message == "/reset":
+                    params[chatid] = None
+                    message = "Reset parameters. Check current params with /params and /model command"
+                    send_message(chatid, message)
+                    return 'OK'
                 else:
-                    help_message = "Available commands are: /help, /clear, /topic, /params, /system, /translate, /history, /model \nhttps://javalove93.github.io/telegram-gptbot/index.html"
+                    help_message = "Available commands are: /help, /clear, /topic, /params, /system, /translate, /history, /model, ... \nhttps://javalove93.github.io/telegram-gptbot/index.html"
                     if message == "/help":
                         send_message(chatid, help_message)
                         return 'OK'
@@ -251,42 +364,75 @@ def webhook():
             if translate_target:
                 message = tclient.translate(message, target_language='en')['translatedText']
             messages.append({'role': 'user', 'content': message})
-            logging.info(json.dumps(messages, indent=4))
+            if debug == "on":
+                logging.info(json.dumps(messages, indent=4))
 
-            # frequency_penalty: 0.5
-            """
-            PT: The `frequency_penalty` parameter in OpenAI's GPT-3 API can be set to any value between 0.0 and 1.0, with 0.0 indicating no penalty for repetition and 1.0 indicating the strongest possible penalty for repetition. 
+            while True:
+                tokenizer = AutoTokenizer.from_pretrained("gpt2")
+                number_of_tokens = len(tokenizer(json.dumps(messages))['input_ids'])
+                if number_of_tokens > max_tokens:
+                    if trim == "off":
+                        logging.info("Message token size {} is too big. Skipping the message.".format(number_of_tokens))
+                        send_message(chatid, "Message token size {} is too big. Skipping the message.".format(number_of_tokens))
+                        return 'OK'
+                    
+                    # remove the second array element of messages
+                    messages.pop(1)
+                    message_trimd = "*** Old history is trimmed. ***"
+                    if len(messages) < 2:
+                        # remove the last line of message
+                        message = message[:message.rfind('\n')]
+                        messages.append({'role': 'user', 'content': message})
+                        message_trimd = "*** Later part of the message is trimmed. ***"
+                else:
+                    break
 
-            Here's an overview of what different values of `frequency_penalty` might result in:
+            logging.info("Sending message toekn size to OpenAI: {}".format(number_of_tokens))
+            api_or_rest = "rest"
+            if api_or_rest == "api":
+                response = openai.ChatCompletion.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=1,
+                    frequency_penalty=frequency_penalty,
+                    presence_penalty=presence_penalty,
+                    stop=None,
+                    timeout=timeout         # seconds - doesn't work
+                )
+            else:
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer " + openai_apikey
+                }
+                body = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": 1,
+                    "frequency_penalty": frequency_penalty,
+                    "presence_penalty": presence_penalty,
+                    "stop": None
+                }
+                if debug == "on":
+                    logging.info("------ REST API Request Body ------")
+                    logging.info(json.dumps(body, indent=4))
+                response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=body, timeout=timeout)
+                if response.status_code != 200:
+                    logging.error("OpenAI API error: {}".format(response.status_code))
+                    logging.error(response.text)
+                    send_message(chatid, "OpenAI API error: {}".format(response.status_code))
+                    return 'OK'
+                response = response.json()
 
-            - 0.0: No penalty for repetition. The model may generate more repetitive output.
-            - 0.5: Moderate penalty for repetition. The model will try to avoid repeating words or phrases too often.
-            - 1.0: Strong penalty for repetition. The model will avoid repeating words or phrases as much as possible, which may result in more diverse output but could also make the output less coherent or grammatically correct.
-
-            The optimal value for `frequency_penalty` will depend on the specific use case and the desired output. A higher value may be more appropriate for generating creative or novel output, while a lower value may be more appropriate for generating more coherent or structured output.
-            """
-
-            # presence_penalty: 0.5
-            """
-            GPT: `presence_penalty` is a parameter in OpenAI's GPT-3 language model that controls the model's tendency to generate repeated phrases or sentences. It is used to penalize the model for generating text that is too similar to the input text or previously generated text. 
-
-            The presence penalty value ranges from 0 to 1, with 0 indicating no penalty and 1 indicating the maximum penalty. A higher presence penalty value results in the model being more cautious about generating text that is similar to the input or previous outputs. 
-
-            This parameter is useful in preventing the model from generating repetitive or redundant text and can be adjusted based on the specific use case and desired output.
-            """
-
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=1,
-                frequency_penalty=frequency_penalty,
-                presence_penalty=presence_penalty,
-                stop=None
-            )
+            if debug == "on":
+                logging.info(json.dumps(response, indent=4))
 
             message = response['choices'][0]['message']['content']
+            number_of_tokens = len(tokenizer(message)['input_ids'])
+            logging.info("Received message token size from OpenAI: {}".format(number_of_tokens))
             if translate_target:
                 message = tclient.translate(message, target_language=translate_target)['translatedText']
             messages.append({'role': 'assistant', 'content': message})
@@ -296,10 +442,29 @@ def webhook():
         else:
             response_text = "GPT: You're not welcomed to use this bot. {}".format(chatid)
 
+        if message_trimd is not None:
+            response_text = message_trimd + "\n" + response_text
         send_message(chatid, response_text)
     except Exception as e:
         logging.exception(e)
-        send_message(chatid, 'Error')
+        
+        full_stack_error_msg = traceback.format_exc()
+        # ERROR:root:This model's maximum context length is 4097 tokens. However, you requested 5913 tokens (3865 in the messages, 2048 in the completion). 
+        # Please reduce the length of the messages or completion.
+        too_many_tokens_error = "This model's maximum context length is"
+        if str(e).find(too_many_tokens_error) != -1:
+            max_tokens = int(re.findall(r'\d+', str(e))[0]) - 1
+            requested_tokens = int(re.findall(r'\d+', str(e))[1]) - 1
+            message_tokens = int(re.findall(r'\d+', str(e))[2]) - 1
+            completion_tokens = int(re.findall(r'\d+', str(e))[3]) - 1
+            logging.error("Too many tokens: max_tokens={}, requested_tokens={}, message_tokens={}, completion_tokens={}".format(max_tokens, requested_tokens, message_tokens, completion_tokens))
+            send_message(chatid, "[Error] Too many tokens: max_tokens={}, requested_tokens={}, message_tokens={}, completion_tokens={}".format(max_tokens, requested_tokens, message_tokens, completion_tokens))
+            return 'OK'
+            
+        if debug == "on":
+            send_message(chatid, full_stack_error_msg)
+        else:
+            send_message(chatid, "Error: {}".format(str(e)))
 
     return 'OK'
 
@@ -355,8 +520,9 @@ def set_webhook():
     global bot_token
 
     # set webhook
+    # max_connections=1 for preventing retry - doesn't work
     url = request.form.get('url')
-    url = "https://api.telegram.org/bot{}/setWebhook?url={}/webhook".format(bot_token, url)
+    url = "https://api.telegram.org/bot{}/setWebhook?url={}/webhook&max_connections=1".format(bot_token, url)
     response = requests.post(url)
     response.raise_for_status()
 
@@ -367,7 +533,7 @@ if __name__ == '__main__':
     # if URL exists
     if os.environ.get('URL'):
         url = os.environ.get('URL')
-        url = "https://api.telegram.org/bot{}/setWebhook?url={}/webhook".format(bot_token, url)
+        url = "https://api.telegram.org/bot{}/setWebhook?url={}/webhook&max_connections=1".format(bot_token, url)
         response = requests.post(url)
         response.raise_for_status()
 
