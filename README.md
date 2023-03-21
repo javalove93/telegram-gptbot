@@ -35,3 +35,12 @@ ChatGPT를 편하게 불러쓸수 있게 텔레그램 봇에 openai API를 연�
 
 5. 봇 커맨드 사용법
 * https://javalove93.github.io/telegram-gptbot/
+
+## Design Considerations
+
+* OpenAI GPT models have number of token limitation like other NLP models. gpt-3-turbo has 2048 for reuqest and 4096 for being shared between reqeust and response. So default max_tokens for gpt-3-turbo is 2048 that means your input can't exceed 2048 tokens where token size is usually slightly more than number of words. This uses transformers tokenizer to figure out token size before sending reqeust.
+* To help users to handle that token size limitation, this bot is to remove(forget) old conversation histories if new request(old history + new message) is bigger than max_tokens. If new message is still bigger than token limit, then it's tyring to remove later part of the message.
+
+
+
+
