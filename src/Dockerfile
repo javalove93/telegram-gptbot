@@ -8,10 +8,12 @@ WORKDIR $APP_HOME
 COPY . ./
 
 # Install production dependencies.
-RUN pip install Flask gunicorn openai
+RUN pip install Flask gunicorn openai google-cloud-translate transformers firebase-admin
+
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/sa-key.json
 
 # Run the web service on container startup. Here we use the gunicorn
-# webserver, with 4 worker process and only one thread per worker.
+# webserver, with only one worker process and only one thread per worker.
 # For environments with multiple CPU cores, increase the number of workers
 # to be equal to the cores available.
-CMD exec gunicorn --bind :8080 --workers 1 --threads 1 --timeout 0 webhook:app
+CMD exec gunicorn --bind :8080 --workers 4 --threads 1 --timeout 0 webhook:app
