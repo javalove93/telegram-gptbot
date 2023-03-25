@@ -41,6 +41,10 @@ ChatGPT를 편하게 불러쓸수 있게 텔레그램 봇에 openai API를 연�
 * OpenAI GPT models have number of token limitation like other NLP models. gpt-3-turbo has 2048 for reuqest and 4096 for being shared between reqeust and response. So default max_tokens for gpt-3-turbo is 2048 that means your input can't exceed 2048 tokens where token size is usually slightly more than number of words. This uses transformers tokenizer to figure out token size before sending reqeust.
 * To help users to handle that token size limitation, this bot is to remove(forget) old conversation histories if new request(old history + new message) is bigger than max_tokens. If new message is still bigger than token limit, then it's tyring to remove later part of the message.
 
+## Telegram ChatGPT bot usage example
+* It can be used as log file formatter in interative way !!!!
+* If you're good prompt engineer, you may use the prompt, "please remove DEFAULT and date from the text and make it to pretty format"
+![image](https://user-images.githubusercontent.com/4580526/227698759-c812ea58-5502-4aef-95dd-818e5822c09a.png)
 
 
 
