@@ -28,7 +28,10 @@ firebase_db = None
 try:
     import firebase_admin
     from firebase_admin import credentials, db
-    cred = credentials.Certificate('YOUR_FIREBASE_SA_KEY_PATH_IF_YOU_WANT') ############## REDACTED
+    if "FIREBASE_SA_KEY" in os.environ:
+        cred = credentials.Certificate(os.environ['FIREBASE_SA_KEY'])
+    else:
+        cred = credentials.Certificate('YOUR_FIREBASE_SA_KEY_PATH_IF_YOU_WANT') ############## REDACTED
     firebase_admin.initialize_app(cred, {
         'databaseURL: YOUR_FIREBASE_DATABASE_URL' ############## REDACTED
     })
@@ -39,6 +42,8 @@ except Exception as e:
 
 # Params for openai api
 params = {}
+saved_history = {
+}
 
 # allowed chatid
 allowed_chatid = [ALLOWED_CHATID_1, ALLOWED_CHATID_2, ... as number] ############## REDACTED
@@ -72,9 +77,10 @@ def params_get(chatid):
         except Exception as e:
             full_stack_error_msg = traceback.format_exc()
             logging.error(full_stack_error_msg)
-    if chatid not in params:
-        params[chatid] = {}
-    return params[chatid]
+    else:
+        if chatid not in params:
+            params[chatid] = {}
+        return params[chatid]
 
 def params_set(chatid, value):
     global firebase_db, params
@@ -88,16 +94,67 @@ def params_set(chatid, value):
         except Exception as e:
             full_stack_error_msg = traceback.format_exc()
             logging.error(full_stack_error_msg)
-    if chatid not in params:
-        params[chatid] = {}
-    params[chatid] = value
+    else:
+        if chatid not in params:
+            params[chatid] = None
+        params[chatid] = value
+
+def save_history(chatid, title):
+    global firebase_db, saved_history
+    chatid = str(chatid)
+    # timestamp as GMT+9
+    timestamp = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S')
+    if firebase_db is not None:
+        try:
+            firebase_db.child('saved_history').child(chatid).child(timestamp).set({
+                "title": title,
+                "params": params_get(chatid)
+            })
+        except Exception as e:
+            full_stack_error_msg = traceback.format_exc()
+            logging.error(full_stack_error_msg)
+    else:
+        if chatid not in saved_history:
+            saved_history[chatid] = {}
+        saved_history[chatid][timestamp] = {
+            "title": title,
+            "params": params_get(chatid)
+        }
+
+def get_saved_history(chatid):
+    global firebase_db, saved_history
+    chatid = str(chatid)
+    if firebase_db is not None:
+        try:
+            return firebase_db.child('saved_history').child(chatid).get()
+        except Exception as e:
+            full_stack_error_msg = traceback.format_exc()
+            logging.error(full_stack_error_msg)
+    else:
+        if chatid not in saved_history:
+            return None
+        return saved_history[chatid]
+
+def load_history(chatid, key):
+    global firebase_db, saved_history
+    chatid = str(chatid)
+    if firebase_db is not None:
+        try:
+            history = firebase_db.child('saved_history').child(chatid).child(key).get()
+            params_set(chatid, history['params'])
+        except Exception as e:
+            full_stack_error_msg = traceback.format_exc()
+            logging.error(full_stack_error_msg)
+    else:
+        params_set(chatid, saved_history[chatid][key]['params'])
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    global openai_apikey, allowed_chatid
+    global openai_apikey, allowed_chatid, bot_token
 
     # Extract the message from the incoming request
     update = request.json
+    logging.info(update)
 
     # 1:1 chat message sample
     ''' 
@@ -148,20 +205,26 @@ def webhook():
 
     try:
         debug = "on"
+        stt_text = None
         try:
             update_id = update['update_id']
             if 'channel_post' in update:
                 chatid = update['channel_post']['chat']['id']
-                message = update['channel_post']['text']
+                message = update['channel_post']
             elif 'edited_message' in update:
                 chatid = update['edited_message']['chat']['id']
-                message = update['edited_message']['text']
+                message = update['edited_message']
             else:
                 chatid = update['message']['chat']['id']
-                message = update['message']['text']
+                message = update['message']
+
+
+            message = message['text']
         except Exception as e:
-            logging.error("Error: {}".format(e))
+            full_stack_error_msg = traceback.format_exc()
+            logging.error("Error: {}".format(full_stack_error_msg))
             logging.error(json.dumps(update, indent=4))
+
             return "OK"
 
         # frequency_penalty: 0.5
@@ -190,8 +253,15 @@ def webhook():
 
         # Allow only specific chat id to prevent abusing of your openai budget !!!!
         if chatid in allowed_chatid:
+            logging.info("chatid: {}, allowed_chatid: {}".format(chatid, allowed_chatid))
+            if chatid < 0:
+                if message.startswith("[gpt]"):
+                    message = message[5:].strip()
+                    logging.info("channel chat into GPT: {}".format(message))
+                else:
+                    return "OK"
             params = params_get(chatid)
-            if params is None:
+            if params is None or params == {}:
                 params = {
                     'model': 'gpt-3.5-turbo',
                     'max_tokens': 2048 FOR gpt-3.5-turbo AND 4096 FOR gpt-4, ############## REDACTED
@@ -206,6 +276,8 @@ def webhook():
                         {'role': 'system', 'content': 'You are a helpful assistant'}
                     ]
                 }
+
+            # logging.info("params: {}".format(params))
 
             model = params['model']
             frequency_penalty = params['frequency_penalty']
@@ -223,20 +295,27 @@ def webhook():
 
             # Prevent same update_id retry (mostly caused by openai API timeout) - works
             if 'last_update_id' in params and update_id == params['last_update_id']:
+                logging.info("Same update_id: {}. Ignore".format(update_id))
                 send_message(chatid, "Same update_id. Ignore")
                 return "OK"
 
             params['last_update_id'] = update_id
             params_set(chatid, params)
 
+            if stt_text is not None:
+                send_message(chatid, "STT: {}".format(stt_text))
+
             if translate_target != "None":
                 tclient = translate.Client()
 
             update_msg = True
+            saveHistory = False
 
             # Bot's / command parsing and handling
-            if message.startswith("/"):
-                if message == "/clear":
+            if message.startswith("%%"):
+                message = message.replace("%%", "/")
+            if message.startswith("/") or message == "--" or message == "++":
+                if message == "/clear" or message == "/c" or message == "--":
                     messages = [
                         {'role': 'system', 'content': 'You are a helpful assistant'}
                     ]
@@ -244,9 +323,47 @@ def webhook():
                     params_set(chatid, params)
                     send_message(chatid, "Clear messages")
                     return 'OK'
-                elif message == "/topic" or message == "/topics":
+                elif message == "/topic" or message == "/topics" or message == "/t":
                     message = "list up topics we have discussed"
                     update_msg = False
+                elif message == "/save" or message == "/s":
+                    message = "what is a title based on our conversation?"
+                    update_msg = False
+                    saveHistory = True
+                elif message == "/list" or message == "/l":
+                    history = get_saved_history(chatid)
+                    if history is None or history == {}: 
+                        message = "No saved history"
+                    else:
+                        message = "Saved history:\n"
+                        idx = 1
+                        for key in history:
+                            message += "{}: {} at {}\n".format(idx, history[key]['title'], key)
+                            idx += 1
+                    send_message(chatid, message)
+                    return 'OK'
+                elif message.startswith("/load"):
+                    history = get_saved_history(chatid)
+                    if history is None or history == {}: 
+                        message = "No saved history"
+                    else:
+                        if message == "/load":
+                            message = "which history do you want to load? (1, 2, 3, ...)"
+                        else:
+                            try:
+                                idx = int(message[6:].strip())
+                                print("idx: {}, len: {}".format(idx, len(history)))
+                                if idx > 0 and idx <= len(history):
+                                    key = list(history.keys())[idx-1]
+                                    load_history(chatid, key)
+                                    message = "Loaded history: {}".format(history[key]['title'])
+                                else:
+                                    message = "Invalid index"
+                            except Exception as e:
+                                logging.exception(e)
+                                message = "Invalid index"
+                    send_message(chatid, message)
+                    return 'OK'
                 elif message.startswith("/params"):
                     if message == "/params":
                         message = "frequency_penalty: {}\npresence_penalty: {}\nmax_tokens: {}\ntemperature: {}\nmodel: {}".format(frequency_penalty, presence_penalty, max_tokens, temperature, model)
@@ -331,7 +448,7 @@ def webhook():
 
                         send_message(chatid, message)
                         return 'OK'
-                elif message == "/history":
+                elif message == "/history" or message == "/h" or message == "++":
                     message = "History messages are: \n"
                     for msg in messages:
                         message += "{}: {}\n".format(msg['role'], msg['content'])
@@ -509,6 +626,11 @@ def webhook():
             if update_msg:
                 params['messages'] = messages
                 params_set(chatid, params)
+            if saveHistory:
+                # get quotated string from message into title and remove quote mark
+                title = re.findall(r'"([^"]*)"', message)[0]
+                save_history(chatid, title)
+                message = "History saved as title, \"{}\"".format(title)
             if debug == "on":
                 response_text = get_system_info() + "\n" + message
             else:
@@ -533,14 +655,22 @@ def webhook():
     return 'OK'
 
 def send_message(chatid, text):
-    # Send a message to the user using the Telegram Bot API
-    url = "https://api.telegram.org/bot{}/sendMessage".format(bot_token)
-    data = {
-        "chat_id": chatid,
-        "text": text
-    }
-    response = requests.post(url, json=data)
-    response.raise_for_status()
+    try:
+        # Send a message to the user using the Telegram Bot API
+        url = "https://api.telegram.org/bot{}/sendMessage".format(bot_token)
+        data = {
+            "chat_id": chatid,
+            "text": text
+        }
+        logging.info("Sending message to {}: {}".format(chatid, text))
+        response = requests.post(url, json=data)
+        response.raise_for_status()
+    except Exception as e:
+        logging.exception(e)
+        full_stack_error_msg = traceback.format_exc()
+        logging.error(full_stack_error_msg)
+
+        logging.info("data: {}".format(json.dumps(data, indent=4)))
 
 @app.route('/channels', methods=['GET'])
 def channels():

@@ -8,7 +8,10 @@ WORKDIR $APP_HOME
 COPY . ./
 
 # Install production dependencies.
-RUN pip install Flask gunicorn openai google-cloud-translate transformers firebase-admin
+RUN pip install Flask gunicorn openai google-cloud-translate transformers firebase-admin google-cloud-speech pydub
+RUN pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+RUN apt update
+RUN apt install -y ffmpeg
 
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/sa-key.json
 
