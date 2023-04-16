@@ -10,6 +10,13 @@ import openai
 from google.cloud import translate_v2 as translate
 import logging
 import sys
+from bs4 import BeautifulSoup
+from langdetect import detect
+
+# Telegarm python packages
+# pip install python-telegram-bot
+# import telegram
+# bot = telegram.Bot(token='YOUR_TOKEN')
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
@@ -64,7 +71,6 @@ def get_system_info():
     started = kst_timestamp.strftime('%Y-%m-%d %H:%M:%S')
     message += ", Boot time: {}".format(started)
     return message
-
 def params_get(chatid):
     global firebase_db, params
     chatid = str(chatid)
@@ -154,7 +160,11 @@ def webhook():
 
     # Extract the message from the incoming request
     update = request.json
+    # get headers
+    headers = request.headers
+    # logging.info(headers)
     logging.info(update)
+    # logging.info(request.data)
 
     # 1:1 chat message sample
     ''' 
@@ -217,9 +227,9 @@ def webhook():
             else:
                 chatid = update['message']['chat']['id']
                 message = update['message']
-
-
             message = message['text']
+
+            logging.info("message length is {}".format(len(message)))
         except Exception as e:
             full_stack_error_msg = traceback.format_exc()
             logging.error("Error: {}".format(full_stack_error_msg))
@@ -264,7 +274,7 @@ def webhook():
             if params is None or params == {}:
                 params = {
                     'model': 'gpt-3.5-turbo',
-                    'max_tokens': 2048 FOR gpt-3.5-turbo AND 4096 FOR gpt-4, ############## REDACTED
+                    'max_tokens': 1024 FOR gpt-3.5-turbo AND 2048 FOR gpt-4, ############## REDACTED
                     'frequency_penalty': 0.5,
                     'presence_penalty': 0.5,
                     'temperature': 0.5,
@@ -302,6 +312,23 @@ def webhook():
             params['last_update_id'] = update_id
             params_set(chatid, params)
 
+
+            # Telegram sends a long message as multiple message snippets that is around 4096 bytes long.
+            # Try to combine them into one message
+            if len(message) >= 4090:
+                if len(message) < 4096:
+                    message = message + " "
+                if 'last_message' in params and len(params['last_message']) > 0:
+                    message = params['last_message'] + message
+                params['last_message'] = message
+                params_set(chatid, params)
+                send_message(chatid, "*** Message too long. Wait for next snippet ***")
+                return "OK"
+            elif 'last_message' in params and len(params['last_message']) > 0:
+                message = params['last_message'] + message
+                params['last_message'] = ""
+                params_set(chatid, params)
+
             if stt_text is not None:
                 send_message(chatid, "STT: {}".format(stt_text))
 
@@ -314,7 +341,7 @@ def webhook():
             # Bot's / command parsing and handling
             if message.startswith("%%"):
                 message = message.replace("%%", "/")
-            if message.startswith("/") or message == "--" or message == "++":
+            if message.startswith("/") or message == "--" or message == "++" or message == "-ko" or message == "--ko" or message.startswith("http://") or message.startswith("https://"):
                 if message == "/clear" or message == "/c" or message == "--":
                     messages = [
                         {'role': 'system', 'content': 'You are a helpful assistant'}
@@ -452,7 +479,12 @@ def webhook():
                     message = "History messages are: \n"
                     for msg in messages:
                         message += "{}: {}\n".format(msg['role'], msg['content'])
-                    send_message(chatid, message)
+                    if not send_message(chatid, message):
+                        message = "Truncated history messages are: \n"
+                        for msg in messages:
+                            message += "{}: {}\n".format(msg['role'], msg['content'] if len(msg['content']) < 200 else msg['content'][:200] + "...")
+                        send_message(chatid, message)
+
                     return 'OK'
                 elif message.startswith("/model"):
                     if message == "/model":
@@ -508,12 +540,58 @@ def webhook():
                         message = "Trim is {}".format(trim)
                         send_message(chatid, message)
                         return 'OK'
+                elif (message.startswith("/sum") and message.split(" ")[0] in ["/sum", "/summarize", "/summary"] and len(message.split(" ")) > 1) or (message.startswith("http://") or message.startswith("https://")):
+                    if message.startswith("/sum"):
+                        url = message.split(" ")[1]
+                        if len(message.split(" ")) > 2:
+                            length = int(message.split(" ")[2])
+                        else:
+                            length = 10
+                    else:
+                        url = message
+                        length = 10
+
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+                    }
+
+                    response = requests.get(url, headers=headers)
+
+                    if response.status_code == 200:
+                        html = response.text
+                        soup = BeautifulSoup(html, 'html.parser')
+
+                        # get the title
+                        title = soup.select_one('title').get_text().strip()
+
+                        # get the body
+                        body = soup.select_one('body')
+                        
+                        # list the first level children of the body
+                        children = body.findChildren()
+                        content = ''
+                        for child in children:
+                            if child.name == 'p':
+                                content += child.get_text().strip() + '\n'
+                        
+                        language = detect(content)
+                        if language == 'en':
+                            message = "summarize this as {} bullet points:\n{}\n{}".format(length, title, content)
+                        elif language == 'ko':
+                            message = "요약을 {} 개의 문장으로 해주세요:\n{}\n{}".format(length, title, content)
+                        else:
+                            message = "summarize this as {} bullet points and answer in its language:\n{}\n{}".format(length, title, content)
+                    else:
+                        send_message(chatid, "Failed to get the content of the url. Message is {} {}".format(response.status_code, response.text))
+                        return 'OK'
+                elif message == "/ko" or message == "-ko" or message == "--ko":
+                    message = "위의 응답을 한국어로 번역해주세요"
                 elif message == "/info" or message == "/version":
                     send_message(chatid, get_system_info())
                     return 'OK'
                 elif message == "/gpt3":
                     model = "gpt-3.5-turbo"
-                    max_tokens = 2048
+                    max_tokens = 1024
                     params['model'] = model
                     params['max_tokens'] = max_tokens
                     params_set(chatid, params)
@@ -522,7 +600,7 @@ def webhook():
                     return 'OK'
                 elif message == "/gpt4":
                     model = "gpt-4"
-                    max_tokens = 4096
+                    max_tokens = 2048
                     params['model'] = model
                     params['max_tokens'] = max_tokens
                     params_set(chatid, params)
@@ -530,7 +608,7 @@ def webhook():
                     send_message(chatid, message)
                     return 'OK'
                 elif message == "/reset":
-                    params_set(chatid, None)
+                    params_set(chatid, {})
                     message = "Reset parameters. Check current params with /params and /model command"
                     send_message(chatid, message)
                     return 'OK'
@@ -550,6 +628,8 @@ def webhook():
             messages.append({'role': 'user', 'content': message})
             if debug == "on":
                 logging.info(json.dumps(messages, indent=4))
+
+            original_msg_len = len(message.splitlines())
 
             while True:
                 try:
@@ -609,7 +689,7 @@ def webhook():
                             messages.append({'role': 'user', 'content': message})
                             # number of line size of message
                             message_line_size = len(message.splitlines())
-                            message_trimed = "*** Later part of the message is trimmed: {}. ***".format(message_line_size)
+                            message_trimed = "*** Later part of the message is trimmed: {} into {}. ***".format(original_msg_len, message_line_size)
 
                         continue
 
@@ -665,12 +745,14 @@ def send_message(chatid, text):
         logging.info("Sending message to {}: {}".format(chatid, text))
         response = requests.post(url, json=data)
         response.raise_for_status()
+        return True
     except Exception as e:
         logging.exception(e)
         full_stack_error_msg = traceback.format_exc()
         logging.error(full_stack_error_msg)
 
         logging.info("data: {}".format(json.dumps(data, indent=4)))
+        return False
 
 @app.route('/channels', methods=['GET'])
 def channels():
