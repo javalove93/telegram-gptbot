@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block contents %}
+    {% if title %}
+        <h1>Summary</h1>
+        <h2>Title: {{ title }}</h2>
+        <p>{{ content }}</p>
+    {% endif %}
+    {% if structure %}
+        <h1>Structure</h1>
+        <pre>{{ structure }}</pre>
+    {% endif %}
+{% endblock contents %}

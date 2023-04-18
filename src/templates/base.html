@@ -1,0 +1,18 @@
+<html>
+<head>
+    <title>News Summarizer</title>
+</head>
+
+<body>
+    <h1>News Summarizer</h1>
+    <form action="/summarize" method="post">
+        <input type="text" name="url" value="{{ url }}" size="50" />
+        <input type="submit" value="Summarize" />
+    </form>
+
+    {% block contents %}
+    {% endblock contents %}
+
+</body>
+
+</html>
